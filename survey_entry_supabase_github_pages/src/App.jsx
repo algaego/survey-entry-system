@@ -20,9 +20,16 @@ const L = {
   edit: "编辑",
   del: "删除",
   delConfirm: "确认删除这份录入记录吗？此操作不可撤销。",
-  allComplete: "✓ 我已完成全部录入",
-  allCompleteConfirm: "确认你已经录入完分配给你的所有纸质问卷了吗？管理员将看到该状态。",
-  completedMsg: "✓ 你已标记全部录入完成。",
+  allComplete: "🎉 我已完成全部录入（通知管理员）",
+  allCompleteConfirm: "确认标记为“已完成全部录入”吗？这只会通知管理员你的整体任务状态，不会改变任何单份问卷的“草稿/已提交”状态。",
+  completedMsg: "✓ 你已通知管理员：自己已完成全部录入。此状态不会锁定录入功能，也不会改变任何问卷状态；你仍可继续新增、编辑和导出数据。",
+  allCompleteCancel: "取消全部完成标记",
+  allCompleteCancelConfirm: "确认取消全部完成标记吗？",
+  markedComplete: "已标记完成",
+  notMarkedComplete: "未标记完成",
+  completedAt: "完成时间",
+  exportMine: "导出我的数据（CSV）",
+  exportMineJSON: "导出我的数据（JSON）",
   flagHaphazard: "疑似乱填",
   flagIllegible: "字迹模糊 / 难以辨认",
   flagOpenDifficult: "开放题填写内容较难分类",
@@ -627,12 +634,6 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
     return "";
   };
 
-  const handleDraft = async () => {
-    setSaving(true);
-    setError("");
-    await onSave(payload, "draft");
-    setSaving(false);
-  };
 
   const handleSubmit = async () => {
     const msg = validate();
@@ -748,6 +749,7 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
 // ╚════════════════════════════════════════════════════════════════╝
 function ClerkDashboard({ profile }) {
   const [rows, setRows] = useState([]);
+  const [recorderStatus, setRecorderStatus] = useState(null);
   const [mode, setMode] = useState("list");
   const [editId, setEditId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -760,13 +762,22 @@ function ClerkDashboard({ profile }) {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const { data, error } = await supabase
-      .from("survey_entries")
-      .select("*")
-      .eq("user_id", profile.id)
-      .order("entry_num", { ascending: false });
-    if (error) setError(error.message);
-    setRows(data || []);
+    const [{ data: entryData, error: entryErr }, { data: statusData, error: statusErr }] = await Promise.all([
+      supabase
+        .from("survey_entries")
+        .select("*")
+        .eq("user_id", profile.id)
+        .order("entry_num", { ascending: false }),
+      supabase
+        .from("recorder_status")
+        .select("*")
+        .eq("user_id", profile.id)
+        .maybeSingle(),
+    ]);
+    if (entryErr) setError(entryErr.message);
+    else if (statusErr) setError(statusErr.message);
+    setRows(entryData || []);
+    setRecorderStatus(statusData || null);
     setLoading(false);
   }, [profile.id]);
 
@@ -842,21 +853,51 @@ function ClerkDashboard({ profile }) {
     setRows(prev => prev.filter(r => r.id !== entry.dbId));
   };
 
-  const markAllComplete = async () => {
-    if (!confirm(L.allCompleteConfirm)) return;
-    const { error } = await supabase
-      .from("survey_entries")
-      .update({ status: "submitted" })
-      .eq("user_id", profile.id);
+  const toggleAllComplete = async () => {
+    const nextAllDone = !recorderStatus?.all_done;
+    const ok = confirm(nextAllDone ? L.allCompleteConfirm : L.allCompleteCancelConfirm);
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    const { data, error } = await supabase
+      .from("recorder_status")
+      .upsert({
+        user_id: profile.id,
+        recorder_code: profile.recorder_code,
+        all_done: nextAllDone,
+        completed_at: nextAllDone ? new Date().toISOString() : null,
+      }, { onConflict: "user_id" })
+      .select("*")
+      .single();
+    setBusy(false);
     if (error) { setError(error.message); return; }
-    await load();
+    setRecorderStatus(data);
+  };
+
+  const exportMyData = (format) => {
+    const flattened = entries.map(flattenEntry);
+    if (flattened.length === 0) return alert(L.noData);
+    const code = profile.recorder_code || "recorder";
+    if (format === "json") {
+      const payload = {
+        recorder_code: code,
+        all_done: !!recorderStatus?.all_done,
+        completed_at: recorderStatus?.completed_at || null,
+        entries: flattened,
+      };
+      downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), `survey_data_${code}.json`);
+      return;
+    }
+    const headers = Array.from(new Set(flattened.flatMap(r => Object.keys(r))));
+    const csv = [headers.map(csvEscape).join(","), ...flattened.map(r => headers.map(h => csvEscape(r[h])).join(","))].join("\n");
+    downloadBlob(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }), `survey_data_${code}.csv`);
   };
 
   if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: T.textMuted, fontFamily: sans }}>加载中...</div>;
   if (mode === "edit" && currentEntry) return <SurveyForm entry={currentEntry} clerkName={profile.display_name || profile.recorder_code} onSave={saveEntry} onAutoSave={autoSave} onCancel={() => { setMode("list"); setEditId(null); load(); }} />;
   if (mode === "view" && currentEntry) return <SurveyForm entry={currentEntry} clerkName={profile.display_name || profile.recorder_code} readOnlyMode onCancel={() => { setMode("list"); setEditId(null); }} />;
 
-  const allSubmitted = entries.length > 0 && entries.every(e => e.status === "submitted");
+  const allDone = !!recorderStatus?.all_done;
 
   return (
     <div style={{ maxWidth: 780, margin: "0 auto" }}>
@@ -864,8 +905,23 @@ function ClerkDashboard({ profile }) {
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: T.textPrimary }}>{L.dashboard}</h2>
           <p style={{ margin: "4px 0 0", fontFamily: sans, fontSize: 13, color: T.textMuted }}>录入员：{profile.display_name || profile.recorder_code}</p>
+          {allDone && (
+            <p style={{ margin: "6px 0 0", fontFamily: sans, fontSize: 12, color: T.greenText }}>
+              {L.completedMsg}{recorderStatus?.completed_at ? `（${L.completedAt}：${new Date(recorderStatus.completed_at).toLocaleString()}）` : ""}
+            </p>
+          )}
         </div>
-        <button onClick={createNewEntry} disabled={busy} style={{ ...css.btn, padding: "10px 22px", fontSize: 14, fontFamily: sans, opacity: busy ? 0.6 : 1 }}>{busy ? "创建中..." : L.addNew}</button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+          <div style={{ fontSize: 12, color: T.textMuted, fontFamily: sans }}>“全部完成”仅通知管理员，不会提交或锁定问卷。</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={createNewEntry} disabled={busy} style={{ ...css.btn, padding: "10px 18px", fontSize: 14, fontFamily: sans, opacity: busy ? 0.6 : 1 }}>{busy ? L.creating : L.addNew}</button>
+          <button onClick={() => exportMyData("csv")} style={{ ...css.btnSec, padding: "10px 16px", fontSize: 13, fontFamily: sans }}>{L.exportMine}</button>
+          <button onClick={() => exportMyData("json")} style={{ ...css.btnSec, padding: "10px 16px", fontSize: 13, fontFamily: sans }}>{L.exportMineJSON}</button>
+          <button onClick={toggleAllComplete} disabled={busy} style={{ ...css.btnSec, padding: "10px 16px", fontSize: 13, fontFamily: sans, background: allDone ? T.greenBg : T.headerBg, color: allDone ? T.greenText : T.textSecondary, borderColor: allDone ? T.greenBorder : T.headerBorder }}>
+            {allDone ? L.allCompleteCancel : L.allComplete}
+          </button>
+          </div>
+        </div>
       </div>
       {error && <div style={{ marginBottom: 16, padding: 12, background: T.redBg, border: `1px solid ${T.redBorder}`, borderRadius: 10, color: T.redText, fontFamily: sans }}>{error}</div>}
       {entries.length === 0 ? (
@@ -891,20 +947,6 @@ function ClerkDashboard({ profile }) {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {entries.length > 0 && !allSubmitted && (
-        <div style={{ marginTop: 32, textAlign: "center" }}>
-          <button onClick={markAllComplete}
-            style={{ padding: "14px 28px", borderRadius: 12, fontWeight: 700, fontSize: 15, border: "none", cursor: "pointer", fontFamily: sans, background: "#5A7F4A", color: "#FFFDF9", boxShadow: "0 4px 16px rgba(90,127,74,0.2)" }}>
-            {L.allComplete}
-          </button>
-        </div>
-      )}
-      {allSubmitted && (
-        <div style={{ marginTop: 32, padding: 20, background: T.greenBg, border: `1px solid ${T.greenBorder}`, borderRadius: 12, textAlign: "center", color: T.greenText, fontWeight: 600, fontSize: 14, fontFamily: sans }}>
-          {L.completedMsg}
         </div>
       )}
     </div>
@@ -956,6 +998,7 @@ function flattenEntry(entry) {
 function AdminDashboard() {
   const [rows, setRows] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [recorderStatuses, setRecorderStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [viewId, setViewId] = useState(null);
@@ -966,14 +1009,21 @@ function AdminDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const [{ data: entryData, error: entryErr }, { data: profileData, error: profileErr }] = await Promise.all([
+    const [
+      { data: entryData, error: entryErr },
+      { data: profileData, error: profileErr },
+      { data: statusData, error: statusErr },
+    ] = await Promise.all([
       supabase.from("survey_entries").select("*").order("recorder_code", { ascending: true }).order("entry_num", { ascending: true }),
       supabase.from("profiles").select("id, recorder_code, display_name, role").order("recorder_code", { ascending: true }),
+      supabase.from("recorder_status").select("*").order("recorder_code", { ascending: true }),
     ]);
     if (entryErr) setError(entryErr.message);
     else if (profileErr) setError(profileErr.message);
+    else if (statusErr) setError(statusErr.message);
     setRows(entryData || []);
     setProfiles(profileData || []);
+    setRecorderStatuses(statusData || []);
     setLoading(false);
   }, []);
 
@@ -1001,6 +1051,7 @@ function AdminDashboard() {
     return acc;
   }, {});
   const clerkProfiles = profiles.filter(p => p.role === "clerk");
+  const statusByUser = Object.fromEntries(recorderStatuses.map(st => [st.user_id, st]));
   const totalEntries = entries.length;
   const submittedCount = entries.filter(e => e.status === "submitted").length;
 
@@ -1021,6 +1072,7 @@ function AdminDashboard() {
         {clerkProfiles.map(p => {
           const list = byRecorder[p.recorder_code] || [];
           const submitted = list.filter(e => e.status === "submitted").length;
+          const st = statusByUser[p.id];
           return (
             <div key={p.id} style={{ ...css.card, padding: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -1028,6 +1080,10 @@ function AdminDashboard() {
                 <span style={{ fontSize: 12, color: T.textMuted, fontFamily: sans }}>{p.recorder_code}</span>
               </div>
               <div style={{ marginTop: 6, fontSize: 13, color: T.textSecondary, fontFamily: sans }}>{list.length} {L.entries} · {submitted} {L.submitted}</div>
+              <div style={{ marginTop: 8, fontSize: 12, fontFamily: sans, color: st?.all_done ? T.greenText : T.textMuted }}>
+                {st?.all_done ? L.markedComplete : L.notMarkedComplete}
+                {st?.completed_at ? ` · ${new Date(st.completed_at).toLocaleString()}` : ""}
+              </div>
             </div>
           );
         })}
