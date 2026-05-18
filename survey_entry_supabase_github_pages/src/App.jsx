@@ -25,6 +25,8 @@ const L = {
   completedMsg: "✓ 你已标记全部录入完成。",
   flagHaphazard: "疑似乱填",
   flagIllegible: "字迹模糊 / 难以辨认",
+  flagOpenDifficult: "开放题填写内容较难分类",
+  flagNonCompliant: "非按题目要求填写",
   qualityLabel: "录入质量标记",
   qualityHint: "请在录完整张问卷后，根据纸质问卷整体情况进行判断。",
   surveyForm: "问卷录入表",
@@ -37,7 +39,7 @@ const L = {
   required: "必填",
   selectRank: "排序",
   rankPlaceholder: "—",
-  otherSpecify: "其他（请填写）：",
+  otherSpecify: "其他内容：",
   pleaseSelect: "请先完成所有必填题目。",
   autoSaveEnabled: "首次编辑后将自动保存为草稿。",
   autoSaving: "正在自动保存草稿...",
@@ -198,7 +200,8 @@ const QUESTIONS = [
       "时间和精力被多重任务挤压",
     ],
     exclusive:"我目前没有明显的焦虑感（互斥项）",
-    hasOther:true },
+    hasOther:true,
+    otherLabel:"其他类型的压力来源（请填写）" },
   { id:"q9", section:2, label:"9. 面对上述变化或不确定性，你已经采取了哪些行动？（多选题，请至少选择1项）", type:"multi", min:1, max:99,
     opts:[
       "有意识地关注宏观经济走势、政策导向与国家战略",
@@ -209,7 +212,8 @@ const QUESTIONS = [
       "重新审视职业规划，及时跟踪就业动态和行业信息",
     ],
     exclusive:"尚未采取特别有针对性的行动，或仅限于被动接收相关信息（互斥项）",
-    hasOther:true },
+    hasOther:true,
+    otherLabel:"我有其他行动（请填写）" },
   { id:"q10", section:2.5, label:"10. 以下哪种描述最符合你目前使用AI工具的情况？", type:"single",
     opts:[
       "我深度使用AI，并会主动积极探索新的使用方式",
@@ -253,7 +257,8 @@ const QUESTIONS = [
       "自己长期的自发探索与积累",
     ],
     exclusive:"我目前对这项能力的形成途径还不太清楚（互斥项）",
-    hasOther:true },
+    hasOther:true,
+    otherLabel:"我认为有其他更适合的培养途径（请填写）" },
   { id:"q15", section:3, label:"15. 你是否参与或了解过以下学校学院的就业指导资源？请在符合的情况上打钩或画圈。", type:"matrix",
     rows:[
       "（a）学校学院举办的双选会、宣讲会",
@@ -273,7 +278,8 @@ const QUESTIONS = [
       "环境支持（营造更开放的师生讨论、同伴交流、校友经验分享和互助氛围，使学生获得反馈和启发）",
       "时间与空间支持（为学生留出更多自主规划、探索、试错、实习或跨学科学习的弹性时间）",
     ],
-    hasOther:true },
+    hasOther:true,
+    otherLabel:"我认为有其他更好的想法（请填写）" },
 ];
 
 // ╔════════════════════════════════════════════════════════════════╗
@@ -283,6 +289,8 @@ function FontLoader() {
   return <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />;
 }
 const sans = "'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif";
+const MULTI_OTHER_DEFAULT_LABEL = "其他（请填写）";
+const RANK_OTHER_LABEL = "其他（内容下方填写）";
 
 // ╔════════════════════════════════════════════════════════════════╗
 // ║  QUESTION RENDERERS                                           ║
@@ -319,40 +327,48 @@ function SingleQ({ q, value, onChange, readOnly }) {
 
 function MultiQ({ q, value, onChange, otherText, onOtherChange, readOnly }) {
   const selected = value || [];
-  const isExcl = selected.includes(q.exclusive);
+  const otherLabel = q.otherLabel || MULTI_OTHER_DEFAULT_LABEL;
   const toggle = (opt) => {
     if (readOnly) return;
-    if (opt === q.exclusive) { onChange(selected.includes(opt) ? [] : [opt]); return; }
-    let next = selected.filter(s => s !== q.exclusive);
+    let next = [...selected];
     if (next.includes(opt)) next = next.filter(s => s !== opt);
-    else if (next.length < q.max) next = [...next, opt];
+    else next = [...next, opt];
     onChange(next);
   };
-  const allOpts = [...q.opts, ...(q.exclusive ? [q.exclusive] : [])];
+  const allOpts = [...q.opts, ...(q.exclusive ? [q.exclusive] : []), ...(q.hasOther ? [otherLabel] : [])];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <p style={{ fontSize: 12, color: T.textMuted, fontFamily: sans, margin: 0 }}>
-        {q.min === q.max ? `请选择 ${q.min} 项` : q.max < 10 ? `请选择 ${q.min}–${q.max} 项` : `请至少选择 ${q.min} 项`}
-        {selected.length > 0 && ` · 已选择 ${selected.length} 项`}
+        {q.min === q.max ? `题目要求选择 ${q.min} 项` : q.max < 10 ? `题目要求选择 ${q.min}–${q.max} 项` : `题目要求至少选择 ${q.min} 项`}
+        {selected.length > 0 && ` · 已录入 ${selected.length} 项`}
+        {" · 请按纸质问卷原样录入；若未按要求填写，请在底部质量标记中说明。"}
       </p>
       {allOpts.map((opt, i) => {
         const isSel = selected.includes(opt);
-        const dis = !isSel && ((isExcl && opt !== q.exclusive) || (selected.length >= q.max && !isExcl));
+        const isOther = q.hasOther && opt === otherLabel;
         return (
-          <OptLabel key={i} selected={isSel} exclusive={opt === q.exclusive} disabled={dis} readOnly={readOnly} onClick={() => toggle(opt)}>
+          <OptLabel key={i} selected={isSel} exclusive={opt === q.exclusive} readOnly={readOnly} onClick={() => toggle(opt)}>
             <input type="checkbox" checked={isSel} readOnly style={{ marginTop: 2, accentColor: T.accent }} />
-            <span style={{ fontSize: 14, lineHeight: 1.55, fontFamily: sans }}>{opt}</span>
+            {isOther ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1 }}>
+                <span style={{ fontSize: 14, lineHeight: 1.55, fontFamily: sans }}>{opt}</span>
+                <input
+                  type="text"
+                  value={otherText || ""}
+                  onClick={e => e.stopPropagation()}
+                  onFocus={() => { if (!readOnly && !selected.includes(otherLabel)) onChange([...selected, otherLabel]); }}
+                  onChange={e => onOtherChange(e.target.value)}
+                  disabled={readOnly}
+                  style={{ flex: 1, minWidth: 180, fontSize: 14, border: "none", borderBottom: `1px solid ${T.inputBorder}`, outline: "none", background: "transparent", fontFamily: sans, padding: "2px 0" }}
+                  placeholder="请录入纸面填写内容"
+                />
+              </div>
+            ) : (
+              <span style={{ fontSize: 14, lineHeight: 1.55, fontFamily: sans }}>{opt}</span>
+            )}
           </OptLabel>
         );
       })}
-      {q.hasOther && !isExcl && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${T.cardBorder}` }}>
-          <span style={{ fontSize: 13, color: T.textSecondary, flexShrink: 0, fontFamily: sans }}>{L.otherSpecify}</span>
-          <input type="text" value={otherText || ""} onChange={e => onOtherChange(e.target.value)} disabled={readOnly}
-            style={{ flex: 1, fontSize: 14, border: "none", borderBottom: `1px solid ${T.inputBorder}`, outline: "none",
-              background: "transparent", fontFamily: sans, padding: "2px 0", minWidth: 0 }} placeholder="..." />
-        </div>
-      )}
     </div>
   );
 }
@@ -367,17 +383,12 @@ function RankQ({ q, value, onChange, otherText, onOtherChange, readOnly }) {
     onChange(next);
   };
   const usedOpts = Object.values(ranks);
-  const allOpts = [...q.opts, ...(q.hasOther && otherText ? [`其他：${otherText}`] : [])];
+  const allOpts = [...q.opts, ...(q.hasOther ? [RANK_OTHER_LABEL] : [])];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {q.hasOther && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${T.cardBorder}`, marginBottom: 4 }}>
-          <span style={{ fontSize: 13, color: T.textSecondary, flexShrink: 0, fontFamily: sans }}>{L.otherSpecify}</span>
-          <input type="text" value={otherText || ""} onChange={e => onOtherChange(e.target.value)} disabled={readOnly}
-            style={{ flex: 1, fontSize: 14, border: "none", borderBottom: `1px solid ${T.inputBorder}`, outline: "none",
-              background: "transparent", fontFamily: sans, padding: "2px 0", minWidth: 0 }} placeholder="..." />
-        </div>
-      )}
+      <p style={{ fontSize: 12, color: T.textMuted, fontFamily: sans, margin: 0 }}>
+        请只录入纸质问卷中排序最靠前的三项；若实际少于三项，可留空；若超过三项，请保留前三项并在底部质量标记中说明。
+      </p>
       {[1,2,3].map(pos => (
         <div key={pos} style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{
@@ -395,6 +406,14 @@ function RankQ({ q, value, onChange, otherText, onOtherChange, readOnly }) {
           </select>
         </div>
       ))}
+      {q.hasOther && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${T.cardBorder}`, marginTop: 4 }}>
+          <span style={{ fontSize: 13, color: T.textSecondary, flexShrink: 0, fontFamily: sans }}>{L.otherSpecify}</span>
+          <input type="text" value={otherText || ""} onChange={e => onOtherChange(e.target.value)} disabled={readOnly}
+            style={{ flex: 1, fontSize: 14, border: "none", borderBottom: `1px solid ${T.inputBorder}`, outline: "none",
+              background: "transparent", fontFamily: sans, padding: "2px 0", minWidth: 0 }} placeholder="如选择‘其他（内容下方填写）’，请在此录入纸面填写内容" />
+        </div>
+      )}
     </div>
   );
 }
@@ -485,6 +504,8 @@ function dbToEntry(row) {
     interview: row.interview || "",
     flagHaphazard: !!row.flag_haphazard,
     flagIllegible: !!row.flag_illegible,
+    flagOpenDifficult: !!(row.answers || {}).__quality_open_difficult,
+    flagNonCompliant: !!(row.answers || {}).__quality_noncompliant,
     notes: row.notes || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
@@ -492,8 +513,11 @@ function dbToEntry(row) {
 }
 
 function entryPatch(data, status) {
+  const nextAnswers = { ...(data.answers || {}) };
+  nextAnswers.__quality_open_difficult = !!data.flagOpenDifficult;
+  nextAnswers.__quality_noncompliant = !!data.flagNonCompliant;
   return {
-    answers: data.answers || {},
+    answers: nextAnswers,
     others: data.others || {},
     email: data.email || "",
     interview: data.interview || "",
@@ -564,6 +588,8 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
   const [interview, setInterview] = useState(entry?.interview || "");
   const [flagHaph, setFlagHaph] = useState(entry?.flagHaphazard || false);
   const [flagIlleg, setFlagIlleg] = useState(entry?.flagIllegible || false);
+  const [flagOpenDiff, setFlagOpenDiff] = useState(entry?.flagOpenDifficult || false);
+  const [flagNonComp, setFlagNonComp] = useState(entry?.flagNonCompliant || false);
   const [notes, setNotes] = useState(entry?.notes || "");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -572,7 +598,7 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
   const didMount = useRef(false);
   const readOnly = readOnlyMode;
 
-  const payload = useMemo(() => ({ answers, others, email, interview, flagHaphazard: flagHaph, flagIllegible: flagIlleg, notes }), [answers, others, email, interview, flagHaph, flagIlleg, notes]);
+  const payload = useMemo(() => ({ answers, others, email, interview, flagHaphazard: flagHaph, flagIllegible: flagIlleg, flagOpenDifficult: flagOpenDiff, flagNonCompliant: flagNonComp, notes }), [answers, others, email, interview, flagHaph, flagIlleg, flagOpenDiff, flagNonComp, notes]);
 
   const setA = (id, val) => setAnswers(prev => ({ ...prev, [id]: val }));
   const setO = (id, val) => setOthers(prev => ({ ...prev, [id]: val }));
@@ -596,9 +622,6 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
     for (const q of QUESTIONS) {
       const a = answers[q.id];
       if (q.type === "single" && !a) return `请填写：${q.label.substring(0,80)}...`;
-      if (q.type === "multi" && (!a || a.length < q.min)) return `请填写：${q.label.substring(0,80)}...`;
-      if (q.type === "rank" && Object.keys(a || {}).length < q.count) return `请完成排序：${q.label.substring(0,80)}...`;
-      if (q.type === "matrix" && Object.keys(a || {}).length < q.rows.length) return `请填写所有小项：${q.label.substring(0,80)}...`;
       if (q.type === "conditional" && (!a || !a.branch)) return `请填写：${q.label.substring(0,80)}...`;
     }
     return "";
@@ -693,7 +716,7 @@ function SurveyForm({ entry, clerkName, onSave, onAutoSave, onCancel, readOnlyMo
       <div style={{ ...css.card, background: T.amberBg, borderColor: T.amberBorder, padding: 20, marginBottom: 24 }}>
         <p style={{ fontSize: 14, fontWeight: 700, color: T.amberText, marginTop: 0, marginBottom: 6 }}>{L.qualityLabel}</p>
         <p style={{ fontSize: 12, color: T.amberText, marginTop: 0, marginBottom: 12, fontFamily: sans }}>{L.qualityHint}</p>
-        {[[flagHaph, setFlagHaph, L.flagHaphazard],[flagIlleg, setFlagIlleg, L.flagIllegible]].map(([val, setVal, label], i) => (
+        {[[flagHaph, setFlagHaph, L.flagHaphazard],[flagIlleg, setFlagIlleg, L.flagIllegible],[flagOpenDiff, setFlagOpenDiff, L.flagOpenDifficult],[flagNonComp, setFlagNonComp, L.flagNonCompliant]].map(([val, setVal, label], i) => (
           <label key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", cursor: readOnly ? "default" : "pointer" }}>
             <input type="checkbox" checked={val} onChange={e => setVal(e.target.checked)} disabled={readOnly}
               style={{ width: 18, height: 18, accentColor: "#C08030" }} />
@@ -856,7 +879,7 @@ function ClerkDashboard({ profile }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 16, fontWeight: 700, color: T.textPrimary, fontFamily: sans }}>{e.paperNo}</span>
                 <StatusPill status={e.status} />
-                {(e.flagHaphazard || e.flagIllegible) && (
+                {(e.flagHaphazard || e.flagIllegible || e.flagOpenDifficult || e.flagNonCompliant) && (
                   <span style={{ fontSize: 11, padding: "2px 8px", background: T.amberBg, color: T.amberText, borderRadius: 20, fontWeight: 600, fontFamily: sans }}>已标记</span>
                 )}
                 <span style={{ fontSize: 12, color: T.textMuted, fontFamily: sans }}>更新于：{e.updatedAt ? new Date(e.updatedAt).toLocaleString() : "—"}</span>
@@ -898,6 +921,8 @@ function flattenEntry(entry) {
     status: entry.status || "",
     flag_haphazard: entry.flagHaphazard ? "Yes" : "No",
     flag_illegible: entry.flagIllegible ? "Yes" : "No",
+    flag_open_difficult: entry.flagOpenDifficult ? "Yes" : "No",
+    flag_noncompliant: entry.flagNonCompliant ? "Yes" : "No",
     notes: entry.notes || "",
     created: entry.createdAt || "",
     updated: entry.updatedAt || "",
@@ -1029,7 +1054,7 @@ function AdminDashboard() {
                 <td style={{ padding: 12 }}>{e.recorderCode}</td>
                 <td style={{ padding: 12 }}><StatusPill status={e.status} /></td>
                 <td style={{ padding: 12, color: T.textMuted }}>{e.updatedAt ? new Date(e.updatedAt).toLocaleString() : "—"}</td>
-                <td style={{ padding: 12 }}>{(e.flagHaphazard || e.flagIllegible) ? L.flagged : "—"}</td>
+                <td style={{ padding: 12 }}>{(e.flagHaphazard || e.flagIllegible || e.flagOpenDifficult || e.flagNonCompliant) ? L.flagged : "—"}</td>
                 <td style={{ padding: 12, textAlign: "right" }}>
                   <button onClick={() => setViewId(e.dbId)} style={{ ...css.btnSec, padding: "6px 12px", fontSize: 12, fontFamily: sans }}>{L.view}</button>
                 </td>
