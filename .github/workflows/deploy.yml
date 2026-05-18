@@ -29,14 +29,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: ./survey_entry_supabase_github_pages/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install --package-lock=false
+          npm install vite @vitejs/plugin-react react react-dom @supabase/supabase-js --package-lock=false
 
       - name: Build
-        run: npm run build
+        run: npx vite build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
